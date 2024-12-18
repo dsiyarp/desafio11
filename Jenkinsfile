@@ -1,32 +1,51 @@
 pipeline {
     agent any
+    
+    options {
+        skipDefaultCheckout(true) // Evitamos el checkout por defecto
+    }
 
     stages {
         stage('Checkout') {
             steps {
-                // Obtiene el código del repositorio
-                git 'https://github.com/dsiyarp/desafio11.git'
+                // Limpiamos el workspace
+                cleanWs()
+                // Checkout específico de la rama main
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    extensions: [],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/dsiyarp/desafio11.git'
+                    ]]
+                ])
             }
         }
         
         stage('Verificar Archivos') {
             steps {
-                // Lista los archivos en el workspace
-                sh 'ls -la'
+                sh '''
+                    echo "Contenido del directorio:"
+                    ls -la
+                '''
             }
         }
         
         stage('Preparar Despliegue') {
             steps {
-                // Verifica que el archivo index.html existe
-                sh 'test -f index.html'
+                script {
+                    if (fileExists('index.html')) {
+                        echo "index.html encontrado"
+                    } else {
+                        error "index.html no encontrado en el repositorio"
+                    }
+                }
             }
         }
         
         stage('Desplegar a Servidores') {
             steps {
                 echo 'Preparado para desplegar a los servidores web'
-                // Aquí añadiremos después la integración con Ansible
             }
         }
     }
@@ -37,6 +56,9 @@ pipeline {
         }
         failure {
             echo 'El pipeline ha fallado'
+        }
+        always {
+            echo 'Pipeline finalizado'
         }
     }
 }
