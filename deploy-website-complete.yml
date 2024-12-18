@@ -1,0 +1,117 @@
+---
+- name: Desplegar sitio web estático
+  hosts: webservers
+  become: yes
+  vars:
+    repo_url: "https://github.com/dsiyarp/desafio11.git"
+    deploy_path: "/var/www/html"
+    admin_email: "tu-email@ejemplo.com"
+
+  tasks:
+    - name: Actualizar repositorios
+      apt:
+        update_cache: yes
+      
+    - name: Instalar dependencias
+      apt:
+        name: 
+          - git
+          - "{{ 'nginx' if inventory_hostname in groups['nginx'] else 'apache2' }}"
+        state: present
+
+    - name: Crear directorio temporal
+      file:
+        path: /tmp/website-clone
+        state: directory
+
+    - name: Clonar repositorio de GitHub
+      git:
+        repo: "{{ repo_url }}"
+        dest: /tmp/website-clone
+        force: yes
+      register: git_clone
+
+    - name: Copiar archivos al directorio web de Nginx
+      copy:
+        src: /tmp/website-clone/
+        dest: "{{ deploy_path }}"
+        remote_src: yes
+      when: inventory_hostname in groups['nginx']
+      notify: restart nginx
+
+    - name: Copiar archivos al directorio web de Apache
+      copy:
+        src: /tmp/website-clone/
+        dest: "{{ deploy_path }}"
+        remote_src: yes
+      when: inventory_hostname in groups['apache']
+      notify: restart apache
+
+    - name: Configurar permisos de archivos
+      file:
+        path: "{{ deploy_path }}"
+        owner: "{{ 'www-data' if ansible_os_family == 'Debian' else 'apache' }}"
+        group: "{{ 'www-data' if ansible_os_family == 'Debian' else 'apache' }}"
+        recurse: yes
+        mode: '0755'
+
+    - name: Asegurar que Nginx esté corriendo
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+      when: inventory_hostname in groups['nginx']
+
+    - name: Asegurar que Apache esté corriendo
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+      when: inventory_hostname in groups['apache']
+
+    - name: Verificar accesibilidad del sitio
+      uri:
+        url: "http://{{ ansible_host }}"
+        return_content: yes
+        validate_certs: no
+      register: website_check
+      delegate_to: localhost
+      ignore_errors: yes
+
+    - name: Enviar correo de notificación
+      mail:
+        host: localhost
+        port: 25
+        to: "{{ admin_email }}"
+        subject: "Despliegue en {{ inventory_hostname }} - {{ 'Exitoso' if website_check.status == 200 else 'Fallido' }}"
+        body: |
+          El despliegue del sitio web en {{ inventory_hostname }} ha {{ 'finalizado exitosamente' if website_check.status == 200 else 'fallado' }}.
+          
+          Detalles:
+          - Servidor: {{ inventory_hostname }}
+          - IP: {{ ansible_host }}
+          - Estado: {{ website_check.status | default('Error') }}
+          - Última actualización: {{ ansible_date_time.iso8601 }}
+          
+          {{ 'El sitio web está accesible' if website_check.status == 200 else 'El sitio web no está accesible' }}
+      delegate_to: localhost
+      ignore_errors: yes
+
+  handlers:
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+      when: inventory_hostname in groups['nginx']
+
+    - name: restart apache
+      service:
+        name: apache2
+        state: restarted
+      when: inventory_hostname in groups['apache']
+
+  post_tasks:
+    - name: Limpiar directorio temporal
+      file:
+        path: /tmp/website-clone
+        state: absent
