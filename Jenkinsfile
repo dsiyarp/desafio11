@@ -1,64 +1,73 @@
 pipeline {
     agent any
     
-    options {
-        skipDefaultCheckout(true) // Evitamos el checkout por defecto
+    environment {
+        ANSIBLE_HOST = '172.21.238.10'
+        ANSIBLE_USER = 'ubuntu'
+        GITHUB_REPO = 'https://github.com/dsiyarp/desafio11.git'
     }
 
     stages {
         stage('Checkout') {
             steps {
-                // Limpiamos el workspace
                 cleanWs()
-                // Checkout específico de la rama main
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/main']],
-                    extensions: [],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/dsiyarp/desafio11.git'
-                    ]]
-                ])
+                git branch: 'main', url: env.GITHUB_REPO
             }
         }
         
-        stage('Verificar Archivos') {
-            steps {
-                sh '''
-                    echo "Contenido del directorio:"
-                    ls -la
-                '''
-            }
-        }
-        
-        stage('Preparar Despliegue') {
+        stage('Preparar Ansible') {
             steps {
                 script {
-                    if (fileExists('index.html')) {
-                        echo "index.html encontrado"
-                    } else {
-                        error "index.html no encontrado en el repositorio"
-                    }
+                    // Crear directorio en el controlador Ansible
+                    sh """
+                        ssh ${ANSIBLE_USER}@${ANSIBLE_HOST} '
+                            mkdir -p ~/ansible-deploy
+                        '
+                    """
+                    
+                    // Copiar archivos al controlador Ansible
+                    sh """
+                        scp -r * ${ANSIBLE_USER}@${ANSIBLE_HOST}:~/ansible-deploy/
+                    """
                 }
             }
         }
         
-        stage('Desplegar a Servidores') {
+        stage('Ejecutar Ansible Playbook') {
             steps {
-                echo 'Preparado para desplegar a los servidores web'
+                script {
+                    sh """
+                        ssh ${ANSIBLE_USER}@${ANSIBLE_HOST} '
+                            cd ~/ansible-deploy && \
+                            ansible-playbook -i inventory.ini deploy-website.yml
+                        '
+                    """
+                }
+            }
+        }
+        
+        stage('Verificar Despliegue') {
+            steps {
+                script {
+                    // Verificar que ambos servidores responden
+                    sh '''
+                        curl -f http://172.21.239.235 || exit 1
+                        curl -f http://172.21.225.152 || exit 1
+                    '''
+                }
             }
         }
     }
     
     post {
         success {
-            echo '¡Pipeline ejecutado con éxito!'
+            echo 'Pipeline ejecutado exitosamente'
         }
         failure {
             echo 'El pipeline ha fallado'
         }
         always {
-            echo 'Pipeline finalizado'
+            cleanWs()
         }
     }
 }
